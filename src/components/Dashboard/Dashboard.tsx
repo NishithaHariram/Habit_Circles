@@ -584,15 +584,33 @@ export function Dashboard() {
                         <span className="text-sm font-bold">{group.member.user_streak}</span>
                       </div>
                     )}
+
+                    <button
+                      onClick={() => {
+                        if (!isCompleted && !isCompleting) {
+                          console.log('=== Quick Tick Button Clicked ===');
+                          console.log('Task ID:', group.id);
+                          console.log('Task Name:', group.task_name);
+                          completeTask(group.id, group.duration_minutes, group.task_name);
+                        }
+                      }}
+                      disabled={isCompleted || isCompleting}
+                      className={`absolute top-3 left-3 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-300 ${
+                        isCompleted
+                          ? 'bg-green-500 border-green-500 cursor-not-allowed'
+                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 cursor-pointer'
+                      } ${isCompleting ? 'opacity-50 cursor-wait' : ''}`}
+                      title={isCompleted ? 'Completed today' : 'Mark as complete'}
+                    >
+                      {isCompleted ? (
+                        <CheckCircle2 className="w-5 h-5 text-white" />
+                      ) : (
+                        <Circle className="w-5 h-5 text-gray-400" />
+                      )}
+                    </button>
+
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4 flex-1">
-                        {isCompleted ? (
-                          <div className="animate-bounce">
-                            <CheckCircle2 className="w-10 h-10 text-green-500 flex-shrink-0" />
-                          </div>
-                        ) : (
-                          <Circle className="w-10 h-10 text-gray-400 flex-shrink-0" />
-                        )}
+                      <div className="flex items-center space-x-4 flex-1 ml-10">
                         <div className="flex-1">
                           <h3 className={`font-semibold text-lg ${
                             isCompleted
