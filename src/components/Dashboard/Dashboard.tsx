@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { TaskGroup, GroupMember, TaskCompletion } from '../../lib/types';
-import { CheckCircle2, Circle, TrendingUp, Target, Award, AlertCircle, Loader2, Play, Pause, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Circle, TrendingUp, Target, Award, AlertCircle, Loader2, Play, Pause, RotateCcw, Flame } from 'lucide-react';
 
 interface TimerState {
   taskId: string;
@@ -363,6 +363,59 @@ export function Dashboard() {
 
       console.log('Task completion inserted successfully:', completionData);
 
+      console.log('Fetching current member data for streak calculation...');
+      const { data: memberData } = await supabase
+        .from('group_members')
+        .select('user_streak, last_completed_date')
+        .eq('group_id', groupId)
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      let newStreak = 1;
+      if (memberData) {
+        const lastCompleted = memberData.last_completed_date;
+        console.log('Last completed date:', lastCompleted);
+        console.log('Current streak:', memberData.user_streak);
+
+        if (lastCompleted) {
+          const lastDate = new Date(lastCompleted);
+          const todayDate = new Date(today);
+          const diffTime = todayDate.getTime() - lastDate.getTime();
+          const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+          console.log('Days since last completion:', diffDays);
+
+          if (diffDays === 1) {
+            newStreak = memberData.user_streak + 1;
+            console.log('Consecutive day! Increasing streak to:', newStreak);
+          } else if (diffDays > 1) {
+            newStreak = 1;
+            console.log('Streak broken! Resetting to 1');
+          } else {
+            newStreak = memberData.user_streak;
+            console.log('Same day completion, maintaining streak:', newStreak);
+          }
+        } else {
+          console.log('First completion! Starting streak at 1');
+        }
+      }
+
+      console.log('Updating member streak...');
+      const { error: streakError } = await supabase
+        .from('group_members')
+        .update({
+          user_streak: newStreak,
+          last_completed_date: today,
+        })
+        .eq('group_id', groupId)
+        .eq('user_id', profile.id);
+
+      if (streakError) {
+        console.error('Error updating streak:', streakError);
+      } else {
+        console.log('Streak updated successfully! New streak:', newStreak);
+      }
+
       const newXP = profile.xp + xpEarned;
       const newTasksCompleted = profile.tasks_completed + 1;
 
@@ -396,7 +449,7 @@ export function Dashboard() {
       console.log('Refreshing groups list...');
       await fetchMyGroups();
 
-      setSuccessMessage(`Task completed! +${xpEarned} XP earned!`);
+      setSuccessMessage(`Task completed! +${xpEarned} XP earned!${newStreak > 1 ? ` ${newStreak}-day streak! 🔥` : ''}`);
       console.log('✅ Task completion successful!');
 
       setTimeout(() => {
@@ -505,7 +558,7 @@ export function Dashboard() {
               return (
                 <div
                   key={group.id}
-                  className={`border rounded-lg overflow-hidden transition-all duration-300 ${
+                  className={`border rounded-lg overflow-hidden transition-all duration-300 relative ${
                     isCompleted
                       ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
                       : isRunning
@@ -525,6 +578,12 @@ export function Dashboard() {
                   )}
 
                   <div className="p-5">
+                    {group.member && group.member.user_streak > 0 && (
+                      <div className="absolute top-3 right-3 flex items-center space-x-1 bg-gradient-to-r from-orange-500 to-red-500 text-white px-3 py-1 rounded-full shadow-md animate-pulse">
+                        <Flame className="w-4 h-4" />
+                        <span className="text-sm font-bold">{group.member.user_streak}</span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4 flex-1">
                         {isCompleted ? (
