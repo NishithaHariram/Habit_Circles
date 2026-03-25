@@ -10,6 +10,9 @@ export interface Profile {
   avatar_shirt_id?: string;
   avatar_pants_id?: string;
   avatar_accessory_id?: string;
+  equipped_shirt?: string;
+  equipped_pants?: string;
+  equipped_accessories?: string[];
   tasks_completed: number;
   tasks_pending: number;
   created_at: string;

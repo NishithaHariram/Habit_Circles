@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { TaskCompletion, TaskGroup } from '../../lib/types';
 import { User, Mail, Phone, Calendar, TrendingUp, CheckCircle2, Clock, Award, CreditCard as Edit2, Save, X } from 'lucide-react';
+import { Avatar } from '../Avatar/Avatar';
 
 export function Profile() {
   const { profile, setProfile } = useAuth();
@@ -257,6 +258,17 @@ export function Profile() {
                 <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-6">
                   {profile?.username}
                 </h2>
+
+                <div className="mb-6 flex justify-center">
+                  <div className="bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-2xl p-6 shadow-inner">
+                    <Avatar
+                      shirt={profile?.equipped_shirt || 'default'}
+                      pants={profile?.equipped_pants || 'blue'}
+                      accessories={profile?.equipped_accessories || []}
+                      size="medium"
+                    />
+                  </div>
+                </div>
 
                 <div className="space-y-4">
                   <div className="flex items-center space-x-3 text-gray-700 dark:text-gray-300">
