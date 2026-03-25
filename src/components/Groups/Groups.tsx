@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { TaskGroup } from '../../lib/types';
-import { Plus, Lock, Globe, Users as UsersIcon, Calendar, Clock } from 'lucide-react';
+import { Plus, Lock, Globe, Users as UsersIcon, Calendar, Clock, MessageCircle } from 'lucide-react';
 import { CreateGroupModal } from './CreateGroupModal';
 import { GroupDetailModal } from './GroupDetailModal';
+import { TaskRoom } from '../TaskRoom/TaskRoom';
 
 export function Groups() {
   const { profile } = useAuth();
@@ -14,6 +15,7 @@ export function Groups() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TaskGroup | null>(null);
   const [myGroupIds, setMyGroupIds] = useState<Set<string>>(new Set());
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchPublicGroups();
@@ -112,6 +114,10 @@ export function Groups() {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     return days[index];
   };
+
+  if (activeRoomId) {
+    return <TaskRoom groupId={activeRoomId} onBack={() => setActiveRoomId(null)} />;
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -214,9 +220,16 @@ export function Groups() {
                       </button>
                     )}
                     {isMember && (
-                      <div className="text-center text-green-600 dark:text-green-400 font-medium py-2">
-                        Joined
-                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveRoomId(group.id);
+                        }}
+                        className="w-full bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white py-2 rounded-lg transition-all font-medium flex items-center justify-center space-x-2"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Open Room</span>
+                      </button>
                     )}
                   </div>
                 );

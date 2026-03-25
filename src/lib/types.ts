@@ -115,3 +115,20 @@ export interface JournalEntry {
   entry_date: string;
   created_at: string;
 }
+
+export interface TaskRoomPost {
+  id: string;
+  group_id: string;
+  user_id: string;
+  username: string;
+  message: string;
+  likes_count: number;
+  created_at: string;
+}
+
+export interface TaskRoomLike {
+  id: string;
+  post_id: string;
+  user_id: string;
+  created_at: string;
+}
