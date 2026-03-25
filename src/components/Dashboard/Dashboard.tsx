@@ -1,8 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { TaskGroup, GroupMember, TaskCompletion } from '../../lib/types';
-import { CheckCircle2, Circle, TrendingUp, Target, Award, AlertCircle, Loader2 } from 'lucide-react';
+import { CheckCircle2, Circle, TrendingUp, Target, Award, AlertCircle, Loader2, Play, Pause, RotateCcw } from 'lucide-react';
+
+interface TimerState {
+  taskId: string;
+  endTime: number;
+  durationMinutes: number;
+  isPaused: boolean;
+  pausedTimeLeft?: number;
+}
 
 export function Dashboard() {
   const { profile, setProfile } = useAuth();
@@ -12,9 +20,92 @@ export function Dashboard() {
   const [successMessage, setSuccessMessage] = useState('');
   const [error, setError] = useState('');
 
+  const [timers, setTimers] = useState<Map<string, number>>(new Map());
+  const [runningTimers, setRunningTimers] = useState<Set<string>>(new Set());
+  const [pausedTimers, setPausedTimers] = useState<Set<string>>(new Set());
+  const intervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
   useEffect(() => {
     fetchMyGroups();
   }, [profile]);
+
+  useEffect(() => {
+    loadTimersFromStorage();
+
+    return () => {
+      intervalsRef.current.forEach(interval => clearInterval(interval));
+      intervalsRef.current.clear();
+    };
+  }, []);
+
+  const loadTimersFromStorage = () => {
+    console.log('=== Loading Timers from LocalStorage ===');
+    try {
+      const stored = localStorage.getItem('taskTimers');
+      if (stored) {
+        const timerStates: TimerState[] = JSON.parse(stored);
+        console.log('Found stored timers:', timerStates);
+
+        timerStates.forEach(state => {
+          if (!state.isPaused) {
+            const now = Date.now();
+            const timeLeft = Math.max(0, Math.floor((state.endTime - now) / 1000));
+
+            if (timeLeft > 0) {
+              console.log(`Resuming timer for task ${state.taskId}, ${timeLeft}s remaining`);
+              setTimers(prev => new Map(prev).set(state.taskId, timeLeft));
+              setRunningTimers(prev => new Set(prev).add(state.taskId));
+              startTimerInterval(state.taskId, timeLeft);
+            } else {
+              console.log(`Timer for task ${state.taskId} has expired, removing`);
+              removeTimerFromStorage(state.taskId);
+            }
+          } else if (state.pausedTimeLeft) {
+            console.log(`Loading paused timer for task ${state.taskId}, ${state.pausedTimeLeft}s remaining`);
+            setTimers(prev => new Map(prev).set(state.taskId, state.pausedTimeLeft));
+            setPausedTimers(prev => new Set(prev).add(state.taskId));
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Error loading timers from storage:', err);
+    }
+  };
+
+  const saveTimerToStorage = (taskId: string, endTime: number, durationMinutes: number, isPaused: boolean, pausedTimeLeft?: number) => {
+    try {
+      const stored = localStorage.getItem('taskTimers');
+      const timers: TimerState[] = stored ? JSON.parse(stored) : [];
+
+      const existing = timers.findIndex(t => t.taskId === taskId);
+      const newState: TimerState = { taskId, endTime, durationMinutes, isPaused, pausedTimeLeft };
+
+      if (existing >= 0) {
+        timers[existing] = newState;
+      } else {
+        timers.push(newState);
+      }
+
+      localStorage.setItem('taskTimers', JSON.stringify(timers));
+      console.log('Timer saved to storage:', newState);
+    } catch (err) {
+      console.error('Error saving timer to storage:', err);
+    }
+  };
+
+  const removeTimerFromStorage = (taskId: string) => {
+    try {
+      const stored = localStorage.getItem('taskTimers');
+      if (stored) {
+        const timers: TimerState[] = JSON.parse(stored);
+        const filtered = timers.filter(t => t.taskId !== taskId);
+        localStorage.setItem('taskTimers', JSON.stringify(filtered));
+        console.log(`Timer ${taskId} removed from storage`);
+      }
+    } catch (err) {
+      console.error('Error removing timer from storage:', err);
+    }
+  };
 
   const fetchMyGroups = async () => {
     if (!profile) return;
@@ -50,11 +141,166 @@ export function Dashboard() {
     setLoading(false);
   };
 
-  const completeTask = async (groupId: string, durationMinutes: number, taskName: string) => {
-    console.log('=== Mark as Done Clicked ===');
+  const startTimerInterval = (taskId: string, initialTimeLeft: number) => {
+    if (intervalsRef.current.has(taskId)) {
+      clearInterval(intervalsRef.current.get(taskId)!);
+    }
+
+    let currentTimeLeft = initialTimeLeft;
+
+    const interval = setInterval(() => {
+      currentTimeLeft -= 1;
+      console.log(`Timer tick for ${taskId}: ${currentTimeLeft}s remaining`);
+
+      setTimers(prev => new Map(prev).set(taskId, currentTimeLeft));
+
+      if (currentTimeLeft <= 0) {
+        console.log(`Timer completed for ${taskId}`);
+        clearInterval(interval);
+        intervalsRef.current.delete(taskId);
+        setRunningTimers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(taskId);
+          return newSet;
+        });
+        removeTimerFromStorage(taskId);
+        handleTimerComplete(taskId);
+      }
+    }, 1000);
+
+    intervalsRef.current.set(taskId, interval);
+  };
+
+  const startTimer = (groupId: string, durationMinutes: number, taskName: string) => {
+    console.log('=== Timer Started ===');
+    console.log('Task ID:', groupId);
+    console.log('Task Name:', taskName);
+    console.log('Duration:', durationMinutes, 'minutes');
+
+    if (runningTimers.has(groupId) || pausedTimers.has(groupId)) {
+      console.log('Timer already exists for this task');
+      return;
+    }
+
+    const totalSeconds = durationMinutes * 60;
+    const endTime = Date.now() + totalSeconds * 1000;
+
+    console.log('Total seconds:', totalSeconds);
+    console.log('End time:', new Date(endTime).toLocaleTimeString());
+
+    setTimers(prev => new Map(prev).set(groupId, totalSeconds));
+    setRunningTimers(prev => new Set(prev).add(groupId));
+    saveTimerToStorage(groupId, endTime, durationMinutes, false);
+    startTimerInterval(groupId, totalSeconds);
+  };
+
+  const pauseTimer = (groupId: string) => {
+    console.log('=== Timer Paused ===');
+    console.log('Task ID:', groupId);
+
+    const interval = intervalsRef.current.get(groupId);
+    if (interval) {
+      clearInterval(interval);
+      intervalsRef.current.delete(groupId);
+    }
+
+    const timeLeft = timers.get(groupId) || 0;
+    console.log('Time remaining when paused:', timeLeft, 'seconds');
+
+    setRunningTimers(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(groupId);
+      return newSet;
+    });
+    setPausedTimers(prev => new Set(prev).add(groupId));
+
+    saveTimerToStorage(groupId, 0, 0, true, timeLeft);
+  };
+
+  const resumeTimer = (groupId: string, durationMinutes: number) => {
+    console.log('=== Timer Resumed ===');
+    console.log('Task ID:', groupId);
+
+    const timeLeft = timers.get(groupId) || 0;
+    const endTime = Date.now() + timeLeft * 1000;
+
+    console.log('Resuming with', timeLeft, 'seconds remaining');
+    console.log('New end time:', new Date(endTime).toLocaleTimeString());
+
+    setPausedTimers(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(groupId);
+      return newSet;
+    });
+    setRunningTimers(prev => new Set(prev).add(groupId));
+
+    saveTimerToStorage(groupId, endTime, durationMinutes, false);
+    startTimerInterval(groupId, timeLeft);
+  };
+
+  const resetTimer = (groupId: string) => {
+    console.log('=== Timer Reset ===');
+    console.log('Task ID:', groupId);
+
+    const interval = intervalsRef.current.get(groupId);
+    if (interval) {
+      clearInterval(interval);
+      intervalsRef.current.delete(groupId);
+    }
+
+    setTimers(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(groupId);
+      return newMap;
+    });
+    setRunningTimers(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(groupId);
+      return newSet;
+    });
+    setPausedTimers(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(groupId);
+      return newSet;
+    });
+
+    removeTimerFromStorage(groupId);
+  };
+
+  const handleTimerComplete = async (groupId: string) => {
+    console.log('=== Timer Completed - Auto-completing task ===');
+
+    const group = myGroups.find(g => g.id === groupId);
+    if (group) {
+      await completeTask(groupId, group.duration_minutes, group.task_name, true);
+    }
+
+    setTimers(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(groupId);
+      return newMap;
+    });
+  };
+
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const getProgress = (groupId: string, durationMinutes: number): number => {
+    const timeLeft = timers.get(groupId) || 0;
+    const totalSeconds = durationMinutes * 60;
+    return ((totalSeconds - timeLeft) / totalSeconds) * 100;
+  };
+
+  const completeTask = async (groupId: string, durationMinutes: number, taskName: string, autoCompleted = false) => {
+    console.log(autoCompleted ? '=== Auto-Completing Task (Timer Finished) ===' : '=== Mark as Done Clicked ===');
     console.log('Task ID:', groupId);
     console.log('Task Name:', taskName);
     console.log('Duration (minutes):', durationMinutes);
+
+    resetTimer(groupId);
 
     if (!profile) {
       console.error('No profile found');
@@ -250,74 +496,149 @@ export function Dashboard() {
             {myGroups.map((group) => {
               const isCompleting = completingTasks.has(group.id);
               const isCompleted = !!group.completion;
+              const hasTimer = timers.has(group.id);
+              const isRunning = runningTimers.has(group.id);
+              const isPaused = pausedTimers.has(group.id);
+              const timeLeft = timers.get(group.id) || 0;
+              const progress = hasTimer ? getProgress(group.id, group.duration_minutes) : 0;
 
               return (
                 <div
                   key={group.id}
-                  className={`border rounded-lg p-5 transition-all duration-300 ${
+                  className={`border rounded-lg overflow-hidden transition-all duration-300 ${
                     isCompleted
                       ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
+                      : isRunning
+                      ? 'border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20 shadow-lg'
                       : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:shadow-lg'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-4 flex-1">
-                      {isCompleted ? (
-                        <div className="animate-bounce">
-                          <CheckCircle2 className="w-10 h-10 text-green-500 flex-shrink-0" />
-                        </div>
-                      ) : (
-                        <Circle className="w-10 h-10 text-gray-400 flex-shrink-0" />
-                      )}
-                      <div className="flex-1">
-                        <h3 className={`font-semibold text-lg ${
-                          isCompleted
-                            ? 'text-green-700 dark:text-green-300'
-                            : 'text-gray-900 dark:text-white'
-                        }`}>
-                          {group.task_name}
-                        </h3>
-                        <p className={`text-sm ${
-                          isCompleted
-                            ? 'text-green-600 dark:text-green-400'
-                            : 'text-gray-600 dark:text-gray-400'
-                        }`}>
-                          {group.duration_minutes} minutes • Streak: {group.group_streak} days
-                        </p>
-                        {isCompleted && (
-                          <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">
-                            Completed Today ✓
-                          </p>
-                        )}
-                      </div>
+                  {hasTimer && !isCompleted && (
+                    <div className="h-2 bg-gray-200 dark:bg-gray-700">
+                      <div
+                        className={`h-full transition-all duration-1000 ease-linear ${
+                          isRunning ? 'bg-blue-500' : 'bg-orange-500'
+                        }`}
+                        style={{ width: `${progress}%` }}
+                      />
                     </div>
-                    {!isCompleted && (
-                      <button
-                        onClick={() => completeTask(group.id, group.duration_minutes, group.task_name)}
-                        disabled={isCompleting}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform hover:scale-105"
-                      >
-                        {isCompleting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>Saving...</span>
-                          </>
+                  )}
+
+                  <div className="p-5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4 flex-1">
+                        {isCompleted ? (
+                          <div className="animate-bounce">
+                            <CheckCircle2 className="w-10 h-10 text-green-500 flex-shrink-0" />
+                          </div>
                         ) : (
-                          <>
-                            <CheckCircle2 className="w-4 h-4" />
-                            <span>Mark as Done</span>
-                          </>
+                          <Circle className="w-10 h-10 text-gray-400 flex-shrink-0" />
                         )}
-                      </button>
-                    )}
-                    {isCompleted && (
-                      <div className="text-right">
-                        <span className="inline-flex items-center space-x-1 text-green-600 dark:text-green-400 font-bold text-lg">
-                          <Award className="w-5 h-5" />
-                          <span>+{group.completion.xp_earned} XP</span>
-                        </span>
+                        <div className="flex-1">
+                          <h3 className={`font-semibold text-lg ${
+                            isCompleted
+                              ? 'text-green-700 dark:text-green-300'
+                              : 'text-gray-900 dark:text-white'
+                          }`}>
+                            {group.task_name}
+                          </h3>
+                          <p className={`text-sm ${
+                            isCompleted
+                              ? 'text-green-600 dark:text-green-400'
+                              : 'text-gray-600 dark:text-gray-400'
+                          }`}>
+                            {group.duration_minutes} minutes • Streak: {group.group_streak} days
+                          </p>
+                          {isCompleted && (
+                            <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">
+                              Completed Today ✓
+                            </p>
+                          )}
+                          {hasTimer && !isCompleted && (
+                            <div className="mt-2">
+                              <div className={`inline-flex items-center space-x-2 px-3 py-1.5 rounded-full font-mono text-lg font-bold ${
+                                isRunning
+                                  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                                  : 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300'
+                              }`}>
+                                <span>{formatTime(timeLeft)}</span>
+                                {isPaused && <span className="text-xs font-normal">(Paused)</span>}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
+
+                      {!isCompleted && (
+                        <div className="flex items-center space-x-2">
+                          {!hasTimer ? (
+                            <>
+                              <button
+                                onClick={() => startTimer(group.id, group.duration_minutes, group.task_name)}
+                                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 shadow-md hover:shadow-lg transform hover:scale-105"
+                              >
+                                <Play className="w-4 h-4" />
+                                <span>Start Timer</span>
+                              </button>
+                              <button
+                                onClick={() => completeTask(group.id, group.duration_minutes, group.task_name)}
+                                disabled={isCompleting}
+                                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform hover:scale-105"
+                              >
+                                {isCompleting ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <span>Saving...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="w-4 h-4" />
+                                    <span>Mark Done</span>
+                                  </>
+                                )}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {isRunning && (
+                                <button
+                                  onClick={() => pauseTimer(group.id)}
+                                  className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 shadow-md hover:shadow-lg"
+                                >
+                                  <Pause className="w-4 h-4" />
+                                  <span>Pause</span>
+                                </button>
+                              )}
+                              {isPaused && (
+                                <button
+                                  onClick={() => resumeTimer(group.id, group.duration_minutes)}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 shadow-md hover:shadow-lg"
+                                >
+                                  <Play className="w-4 h-4" />
+                                  <span>Resume</span>
+                                </button>
+                              )}
+                              <button
+                                onClick={() => resetTimer(group.id)}
+                                className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 shadow-md hover:shadow-lg"
+                                title="Reset Timer"
+                              >
+                                <RotateCcw className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {isCompleted && (
+                        <div className="text-right">
+                          <span className="inline-flex items-center space-x-1 text-green-600 dark:text-green-400 font-bold text-lg">
+                            <Award className="w-5 h-5" />
+                            <span>+{group.completion.xp_earned} XP</span>
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
