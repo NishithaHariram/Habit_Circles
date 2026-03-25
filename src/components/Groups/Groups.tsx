@@ -16,6 +16,8 @@ export function Groups() {
   const [selectedGroup, setSelectedGroup] = useState<TaskGroup | null>(null);
   const [myGroupIds, setMyGroupIds] = useState<Set<string>>(new Set());
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [joiningGroupId, setJoiningGroupId] = useState<string | null>(null);
+  const [error, setError] = useState<string>('');
 
   useEffect(() => {
     fetchPublicGroups();
@@ -45,68 +47,141 @@ export function Groups() {
     }
   };
 
-  const joinGroup = async (groupId: string, inviteCode?: string) => {
-    if (!profile) return;
+  const joinGroup = async (groupId: string) => {
+    console.log('Join Group clicked for group:', groupId);
 
-    const group = publicGroups.find(g => g.id === groupId);
-    if (!group) return;
-
-    if (group.current_members >= group.max_members) {
-      alert('This group is full');
+    if (!profile) {
+      console.error('No profile found');
       return;
     }
 
-    const { error: memberError } = await supabase.from('group_members').insert({
-      group_id: groupId,
-      user_id: profile.id,
-      role: 'member',
-    });
+    if (joiningGroupId) {
+      console.log('Already joining a group, preventing duplicate action');
+      return;
+    }
 
-    if (!memberError) {
-      await supabase
+    const group = publicGroups.find(g => g.id === groupId);
+    if (!group) {
+      console.error('Group not found:', groupId);
+      return;
+    }
+
+    if (group.current_members >= group.max_members) {
+      setError('This group is full');
+      return;
+    }
+
+    setJoiningGroupId(groupId);
+    setError('');
+    console.log('Starting join process...');
+
+    try {
+      console.log('Inserting group member record...');
+      const { error: memberError } = await supabase.from('group_members').insert({
+        group_id: groupId,
+        user_id: profile.id,
+        role: 'member',
+      });
+
+      if (memberError) {
+        console.error('Error joining group:', memberError);
+        throw memberError;
+      }
+
+      console.log('Successfully added to group_members, updating member count...');
+      const { error: updateError } = await supabase
         .from('task_groups')
         .update({ current_members: group.current_members + 1 })
         .eq('id', groupId);
 
-      fetchPublicGroups();
-      fetchMyGroups();
+      if (updateError) {
+        console.error('Error updating member count:', updateError);
+      }
+
+      console.log('Updating local state immediately...');
+      setMyGroupIds(prev => new Set([...prev, groupId]));
+
+      setPublicGroups(prev => prev.map(g =>
+        g.id === groupId
+          ? { ...g, current_members: g.current_members + 1 }
+          : g
+      ));
+
+      console.log('Join process completed successfully');
+    } catch (err: any) {
+      console.error('Join group error:', err);
+      setError(err.message || 'Failed to join group. Please try again.');
+    } finally {
+      setJoiningGroupId(null);
     }
   };
 
   const joinPrivateGroup = async () => {
-    if (!profile || !privateCode) return;
+    console.log('Join Private Group clicked');
 
-    const { data: group } = await supabase
-      .from('task_groups')
-      .select('*')
-      .eq('invite_code', privateCode.toUpperCase())
-      .maybeSingle();
-
-    if (!group) {
-      alert('Invalid invite code');
+    if (!profile || !privateCode) {
+      console.error('No profile or private code');
       return;
     }
 
-    if (group.current_members >= group.max_members) {
-      alert('This group is full');
+    if (joiningGroupId) {
+      console.log('Already joining a group, preventing duplicate action');
       return;
     }
 
-    const { error } = await supabase.from('group_members').insert({
-      group_id: group.id,
-      user_id: profile.id,
-      role: 'member',
-    });
+    setJoiningGroupId('private');
+    setError('');
+    console.log('Searching for group with invite code:', privateCode);
 
-    if (!error) {
-      await supabase
+    try {
+      const { data: group, error: fetchError } = await supabase
+        .from('task_groups')
+        .select('*')
+        .eq('invite_code', privateCode.toUpperCase())
+        .maybeSingle();
+
+      if (fetchError) throw fetchError;
+
+      if (!group) {
+        setError('Invalid invite code');
+        return;
+      }
+
+      if (group.current_members >= group.max_members) {
+        setError('This group is full');
+        return;
+      }
+
+      console.log('Inserting group member record...');
+      const { error: memberError } = await supabase.from('group_members').insert({
+        group_id: group.id,
+        user_id: profile.id,
+        role: 'member',
+      });
+
+      if (memberError) throw memberError;
+
+      console.log('Updating member count...');
+      const { error: updateError } = await supabase
         .from('task_groups')
         .update({ current_members: group.current_members + 1 })
         .eq('id', group.id);
 
-      alert('Successfully joined the group!');
+      if (updateError) {
+        console.error('Error updating member count:', updateError);
+      }
+
+      console.log('Updating local state...');
+      setMyGroupIds(prev => new Set([...prev, group.id]));
       setPrivateCode('');
-      fetchMyGroups();
+      setError('');
+      alert('Successfully joined the group!');
+      console.log('Private group join completed successfully');
+    } catch (err: any) {
+      console.error('Join private group error:', err);
+      setError(err.message || 'Failed to join group. Please try again.');
+    } finally {
+      setJoiningGroupId(null);
     }
   };
 
@@ -131,6 +206,12 @@ export function Groups() {
           <span>Create Group</span>
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg mb-6">
+          {error}
+        </div>
+      )}
 
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden">
         <div className="flex border-b border-gray-200 dark:border-gray-700">
@@ -214,9 +295,10 @@ export function Groups() {
                           e.stopPropagation();
                           joinGroup(group.id);
                         }}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition-colors font-medium"
+                        disabled={joiningGroupId === group.id}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        Join Group
+                        {joiningGroupId === group.id ? 'Joining...' : 'Join Group'}
                       </button>
                     )}
                     {isMember && (
@@ -249,13 +331,15 @@ export function Groups() {
                     onChange={(e) => setPrivateCode(e.target.value.toUpperCase())}
                     placeholder="ABC123"
                     maxLength={6}
-                    className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-800 dark:text-white text-center text-lg font-mono"
+                    disabled={joiningGroupId === 'private'}
+                    className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-800 dark:text-white text-center text-lg font-mono disabled:opacity-50"
                   />
                   <button
                     onClick={joinPrivateGroup}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors font-medium"
+                    disabled={joiningGroupId === 'private' || !privateCode}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Join
+                    {joiningGroupId === 'private' ? 'Joining...' : 'Join'}
                   </button>
                 </div>
               </div>
@@ -280,8 +364,8 @@ export function Groups() {
           group={selectedGroup}
           onClose={() => setSelectedGroup(null)}
           isMember={myGroupIds.has(selectedGroup.id)}
-          onJoin={() => {
-            joinGroup(selectedGroup.id);
+          onJoin={async () => {
+            await joinGroup(selectedGroup.id);
             setSelectedGroup(null);
           }}
         />
