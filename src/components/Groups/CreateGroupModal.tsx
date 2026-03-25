@@ -16,6 +16,9 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
   const [isPublic, setIsPublic] = useState(true);
   const [maxMembers, setMaxMembers] = useState(10);
   const [repeatDays, setRepeatDays] = useState([true, true, true, true, true, true, true]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   const generateInviteCode = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -28,43 +31,119 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
 
-    const inviteCode = !isPublic ? generateInviteCode() : null;
+    console.log('Create Task button clicked');
 
-    const { data: group, error } = await supabase
-      .from('task_groups')
-      .insert({
-        creator_id: profile.id,
-        task_name: taskName,
-        description: description || null,
-        duration_minutes: durationMinutes,
-        is_public: isPublic,
-        invite_code: inviteCode,
-        max_members: maxMembers,
-        current_members: 1,
-        repeat_days: repeatDays,
-        group_streak: 0,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      alert('Failed to create group');
+    if (loading) {
+      console.log('Already submitting, ignoring click');
       return;
     }
 
-    await supabase.from('group_members').insert({
-      group_id: group.id,
-      user_id: profile.id,
-      role: 'creator',
-    });
-
-    if (!isPublic && inviteCode) {
-      alert(`Group created! Invite code: ${inviteCode}`);
+    if (!profile) {
+      console.error('No profile found');
+      setError('User profile not found. Please try logging in again.');
+      return;
     }
 
-    onCreated();
+    if (!taskName.trim()) {
+      console.error('Task name is required');
+      setError('Task name is required');
+      return;
+    }
+
+    if (durationMinutes < 1) {
+      console.error('Duration must be at least 1 minute');
+      setError('Duration must be at least 1 minute');
+      return;
+    }
+
+    setError('');
+    setSuccessMessage('');
+    setLoading(true);
+
+    console.log('Creating task with data:', {
+      task_name: taskName,
+      description,
+      duration_minutes: durationMinutes,
+      is_public: isPublic,
+      max_members: maxMembers,
+      repeat_days: repeatDays,
+    });
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      const inviteCode = !isPublic ? generateInviteCode() : null;
+
+      console.log('Inserting task group into database...');
+      const { data: group, error: groupError } = await supabase
+        .from('task_groups')
+        .insert({
+          creator_id: profile.id,
+          task_name: taskName,
+          description: description || null,
+          duration_minutes: durationMinutes,
+          is_public: isPublic,
+          invite_code: inviteCode,
+          max_members: maxMembers,
+          current_members: 1,
+          repeat_days: repeatDays,
+          group_streak: 0,
+        })
+        .select()
+        .single();
+
+      if (groupError) {
+        console.error('Error creating task group:', groupError);
+
+        if (groupError.message?.includes('rate limit') || groupError.message?.includes('429')) {
+          throw new Error('Too many requests, please wait and try again');
+        }
+
+        throw new Error(groupError.message || 'Failed to create group');
+      }
+
+      console.log('Task group created successfully:', group);
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      console.log('Adding creator as group member...');
+      const { error: memberError } = await supabase.from('group_members').insert({
+        group_id: group.id,
+        user_id: profile.id,
+        role: 'creator',
+      });
+
+      if (memberError) {
+        console.error('Error adding member:', memberError);
+
+        if (memberError.message?.includes('rate limit') || memberError.message?.includes('429')) {
+          throw new Error('Too many requests, please wait and try again');
+        }
+
+        if (!memberError.message?.includes('duplicate')) {
+          throw new Error(memberError.message || 'Failed to join group');
+        }
+      }
+
+      console.log('Task created successfully!');
+
+      if (!isPublic && inviteCode) {
+        setSuccessMessage(`Group created! Invite code: ${inviteCode}`);
+        setTimeout(() => {
+          onCreated();
+        }, 2000);
+      } else {
+        setSuccessMessage('Task group created successfully!');
+        setTimeout(() => {
+          onCreated();
+        }, 1500);
+      }
+    } catch (err: any) {
+      console.error('Error in handleSubmit:', err);
+      setError(err.message || 'Failed to create task group');
+      setLoading(false);
+    }
   };
 
   const toggleDay = (index: number) => {
@@ -86,16 +165,29 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {error && (
+            <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 p-3 rounded-lg text-sm">
+              {successMessage}
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Task Name
+              Task Name *
             </label>
             <input
               type="text"
               value={taskName}
               onChange={(e) => setTaskName(e.target.value)}
               required
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              disabled={loading}
+              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="e.g., Morning Meditation"
             />
           </div>
@@ -108,14 +200,15 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              disabled={loading}
+              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="Describe your habit..."
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Time Duration (minutes per day)
+              Time Duration (minutes per day) *
             </label>
             <input
               type="number"
@@ -124,7 +217,8 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
               min={1}
               max={1440}
               required
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              disabled={loading}
+              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -156,7 +250,7 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Max Members
+              Max Members *
             </label>
             <input
               type="number"
@@ -165,7 +259,8 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
               min={2}
               max={100}
               required
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              disabled={loading}
+              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -195,15 +290,17 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-6 py-3 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
+              disabled={loading}
+              className="flex-1 px-6 py-3 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium"
+              disabled={loading}
+              className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Create Group
+              {loading ? 'Creating...' : 'Create Group'}
             </button>
           </div>
         </form>
