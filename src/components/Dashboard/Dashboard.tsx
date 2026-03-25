@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { TaskGroup, GroupMember, TaskCompletion } from '../../lib/types';
-import { CheckCircle2, Circle, TrendingUp, Target, Award, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Circle, TrendingUp, Target, Award, AlertCircle, Loader2 } from 'lucide-react';
 
 export function Dashboard() {
-  const { profile } = useAuth();
+  const { profile, setProfile } = useAuth();
   const [myGroups, setMyGroups] = useState<(TaskGroup & { member?: GroupMember; completion?: TaskCompletion })[]>([]);
   const [loading, setLoading] = useState(true);
+  const [completingTasks, setCompletingTasks] = useState<Set<string>>(new Set());
+  const [successMessage, setSuccessMessage] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     fetchMyGroups();
@@ -47,30 +50,123 @@ export function Dashboard() {
     setLoading(false);
   };
 
-  const completeTask = async (groupId: string, durationMinutes: number) => {
-    if (!profile) return;
+  const completeTask = async (groupId: string, durationMinutes: number, taskName: string) => {
+    console.log('=== Mark as Done Clicked ===');
+    console.log('Task ID:', groupId);
+    console.log('Task Name:', taskName);
+    console.log('Duration (minutes):', durationMinutes);
+
+    if (!profile) {
+      console.error('No profile found');
+      setError('Please log in to complete tasks');
+      return;
+    }
+
+    if (completingTasks.has(groupId)) {
+      console.log('Task already being completed, ignoring duplicate click');
+      return;
+    }
+
+    setCompletingTasks(prev => new Set(prev).add(groupId));
+    setError('');
+    setSuccessMessage('');
 
     const xpEarned = Math.floor(durationMinutes / 5);
+    console.log('XP to be earned:', xpEarned, '(1 XP per 5 minutes)');
+
     const today = new Date().toISOString().split('T')[0];
+    console.log('Completion date:', today);
 
-    const { error } = await supabase.from('task_completions').insert({
-      user_id: profile.id,
-      group_id: groupId,
-      completion_date: today,
-      xp_earned: xpEarned,
-    });
+    try {
+      console.log('Checking for existing completion today...');
+      const { data: existingCompletion } = await supabase
+        .from('task_completions')
+        .select('*')
+        .eq('user_id', profile.id)
+        .eq('group_id', groupId)
+        .eq('completion_date', today)
+        .maybeSingle();
 
-    if (!error) {
-      await supabase
+      if (existingCompletion) {
+        console.warn('Task already completed today!');
+        setError('You already completed this task today!');
+        setCompletingTasks(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(groupId);
+          return newSet;
+        });
+        return;
+      }
+
+      console.log('Inserting task completion...');
+      const { data: completionData, error: completionError } = await supabase
+        .from('task_completions')
+        .insert({
+          user_id: profile.id,
+          group_id: groupId,
+          completion_date: today,
+          xp_earned: xpEarned,
+        })
+        .select()
+        .single();
+
+      if (completionError) {
+        console.error('Error inserting task completion:', completionError);
+        throw new Error(completionError.message);
+      }
+
+      console.log('Task completion inserted successfully:', completionData);
+
+      const newXP = profile.xp + xpEarned;
+      const newTasksCompleted = profile.tasks_completed + 1;
+
+      console.log('Updating profile...');
+      console.log('Old XP:', profile.xp, '→ New XP:', newXP);
+      console.log('Old tasks completed:', profile.tasks_completed, '→ New:', newTasksCompleted);
+
+      const { data: updatedProfile, error: profileError } = await supabase
         .from('profiles')
         .update({
-          xp: profile.xp + xpEarned,
-          tasks_completed: profile.tasks_completed + 1
+          xp: newXP,
+          tasks_completed: newTasksCompleted,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', profile.id);
+        .eq('id', profile.id)
+        .select()
+        .single();
 
-      fetchMyGroups();
-      window.location.reload();
+      if (profileError) {
+        console.error('Error updating profile:', profileError);
+        throw new Error(profileError.message);
+      }
+
+      console.log('Profile updated successfully:', updatedProfile);
+
+      if (setProfile) {
+        setProfile(updatedProfile);
+        console.log('Profile state updated in AuthContext');
+      }
+
+      console.log('Refreshing groups list...');
+      await fetchMyGroups();
+
+      setSuccessMessage(`Task completed! +${xpEarned} XP earned!`);
+      console.log('✅ Task completion successful!');
+
+      setTimeout(() => {
+        setSuccessMessage('');
+      }, 3000);
+
+    } catch (err: any) {
+      console.error('Error completing task:', err);
+      setError(err.message || 'Failed to complete task. Please try again.');
+    } finally {
+      setCompletingTasks(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(groupId);
+        return newSet;
+      });
+      console.log('=== Task Completion Process Ended ===');
     }
   };
 
@@ -85,6 +181,19 @@ export function Dashboard() {
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">Dashboard</h1>
+
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded-lg text-sm mb-6">
+          {error}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 p-4 rounded-lg text-sm mb-6 flex items-center space-x-2">
+          <CheckCircle2 className="w-5 h-5" />
+          <span>{successMessage}</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white">
@@ -138,41 +247,81 @@ export function Dashboard() {
           </div>
         ) : (
           <div className="space-y-4">
-            {myGroups.map((group) => (
-              <div
-                key={group.id}
-                className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4 flex-1">
-                    {group.completion ? (
-                      <CheckCircle2 className="w-8 h-8 text-green-500 flex-shrink-0" />
-                    ) : (
-                      <Circle className="w-8 h-8 text-gray-400 flex-shrink-0" />
-                    )}
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-gray-900 dark:text-white">{group.task_name}</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {group.duration_minutes} minutes • Streak: {group.group_streak} days
-                      </p>
+            {myGroups.map((group) => {
+              const isCompleting = completingTasks.has(group.id);
+              const isCompleted = !!group.completion;
+
+              return (
+                <div
+                  key={group.id}
+                  className={`border rounded-lg p-5 transition-all duration-300 ${
+                    isCompleted
+                      ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
+                      : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:shadow-lg'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4 flex-1">
+                      {isCompleted ? (
+                        <div className="animate-bounce">
+                          <CheckCircle2 className="w-10 h-10 text-green-500 flex-shrink-0" />
+                        </div>
+                      ) : (
+                        <Circle className="w-10 h-10 text-gray-400 flex-shrink-0" />
+                      )}
+                      <div className="flex-1">
+                        <h3 className={`font-semibold text-lg ${
+                          isCompleted
+                            ? 'text-green-700 dark:text-green-300'
+                            : 'text-gray-900 dark:text-white'
+                        }`}>
+                          {group.task_name}
+                        </h3>
+                        <p className={`text-sm ${
+                          isCompleted
+                            ? 'text-green-600 dark:text-green-400'
+                            : 'text-gray-600 dark:text-gray-400'
+                        }`}>
+                          {group.duration_minutes} minutes • Streak: {group.group_streak} days
+                        </p>
+                        {isCompleted && (
+                          <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">
+                            Completed Today ✓
+                          </p>
+                        )}
+                      </div>
                     </div>
+                    {!isCompleted && (
+                      <button
+                        onClick={() => completeTask(group.id, group.duration_minutes, group.task_name)}
+                        disabled={isCompleting}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-all font-medium flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform hover:scale-105"
+                      >
+                        {isCompleting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Mark as Done</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {isCompleted && (
+                      <div className="text-right">
+                        <span className="inline-flex items-center space-x-1 text-green-600 dark:text-green-400 font-bold text-lg">
+                          <Award className="w-5 h-5" />
+                          <span>+{group.completion.xp_earned} XP</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  {!group.completion && (
-                    <button
-                      onClick={() => completeTask(group.id, group.duration_minutes)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors font-medium"
-                    >
-                      Complete
-                    </button>
-                  )}
-                  {group.completion && (
-                    <span className="text-green-600 dark:text-green-400 font-medium">
-                      +{group.completion.xp_earned} XP
-                    </span>
-                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
