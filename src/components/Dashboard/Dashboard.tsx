@@ -13,7 +13,7 @@ interface TimerState {
 }
 
 export function Dashboard() {
-  const { profile, setProfile } = useAuth();
+  const { profile, setProfile, refreshTrigger } = useAuth();
   const [myGroups, setMyGroups] = useState<(TaskGroup & { member?: GroupMember; completion?: TaskCompletion })[]>([]);
   const [loading, setLoading] = useState(true);
   const [completingTasks, setCompletingTasks] = useState<Set<string>>(new Set());
@@ -27,7 +27,7 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchMyGroups();
-  }, [profile]);
+  }, [profile, refreshTrigger]);
 
   useEffect(() => {
     loadTimersFromStorage();

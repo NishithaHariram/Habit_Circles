@@ -8,7 +8,7 @@ import { GroupDetailModal } from './GroupDetailModal';
 import { TaskRoom } from '../TaskRoom/TaskRoom';
 
 export function Groups() {
-  const { profile } = useAuth();
+  const { profile, triggerRefresh } = useAuth();
   const [tab, setTab] = useState<'public' | 'private'>('public');
   const [publicGroups, setPublicGroups] = useState<TaskGroup[]>([]);
   const [privateCode, setPrivateCode] = useState('');
@@ -96,6 +96,7 @@ export function Groups() {
         console.log('User is already a member, updating local state only');
         setMyGroupIds(prev => new Set([...prev, groupId]));
         setError('');
+        triggerRefresh();
         return;
       }
 
@@ -111,6 +112,7 @@ export function Groups() {
           console.log('Duplicate entry detected, user already joined');
           setMyGroupIds(prev => new Set([...prev, groupId]));
           setError('');
+          triggerRefresh();
           return;
         }
         console.error('Error joining group:', memberError);
@@ -136,7 +138,8 @@ export function Groups() {
           : g
       ));
 
-      console.log('Join process completed successfully');
+      triggerRefresh();
+      console.log('Join process completed successfully, dashboard refresh triggered');
     } catch (err: any) {
       console.error('Join group error:', err);
       setError(err.message || 'Failed to join group. Please try again.');
@@ -200,6 +203,7 @@ export function Groups() {
         console.log('User is already a member, updating local state only');
         setMyGroupIds(prev => new Set([...prev, group.id]));
         setPrivateCode('');
+        triggerRefresh();
         alert('You are already a member of this group!');
         return;
       }
@@ -216,6 +220,7 @@ export function Groups() {
           console.log('Duplicate entry detected, user already joined');
           setMyGroupIds(prev => new Set([...prev, group.id]));
           setPrivateCode('');
+          triggerRefresh();
           alert('You are already a member of this group!');
           return;
         }
@@ -236,8 +241,9 @@ export function Groups() {
       setMyGroupIds(prev => new Set([...prev, group.id]));
       setPrivateCode('');
       setError('');
+      triggerRefresh();
       alert('Successfully joined the group!');
-      console.log('Private group join completed successfully');
+      console.log('Private group join completed successfully, dashboard refresh triggered');
     } catch (err: any) {
       console.error('Join private group error:', err);
       setError(err.message || 'Failed to join group. Please try again.');

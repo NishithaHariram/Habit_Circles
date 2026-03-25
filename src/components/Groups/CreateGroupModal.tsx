@@ -9,7 +9,7 @@ interface CreateGroupModalProps {
 }
 
 export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) {
-  const { profile } = useAuth();
+  const { profile, triggerRefresh } = useAuth();
   const [taskName, setTaskName] = useState('');
   const [description, setDescription] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(30);
@@ -127,6 +127,8 @@ export function CreateGroupModal({ onClose, onCreated }: CreateGroupModalProps) 
       }
 
       console.log('Task created successfully!');
+
+      triggerRefresh();
 
       if (!isPublic && inviteCode) {
         setSuccessMessage(`Group created! Invite code: ${inviteCode}`);
