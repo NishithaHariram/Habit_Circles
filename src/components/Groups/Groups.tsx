@@ -21,8 +21,10 @@ export function Groups() {
 
   useEffect(() => {
     fetchPublicGroups();
-    fetchMyGroups();
-  }, []);
+    if (profile) {
+      fetchMyGroups();
+    }
+  }, [profile]);
 
   const fetchPublicGroups = async () => {
     const { data } = await supabase
@@ -60,6 +62,12 @@ export function Groups() {
       return;
     }
 
+    if (myGroupIds.has(groupId)) {
+      console.log('User is already a member of this group');
+      setError('You are already a member of this group');
+      return;
+    }
+
     const group = publicGroups.find(g => g.id === groupId);
     if (!group) {
       console.error('Group not found:', groupId);
@@ -76,6 +84,21 @@ export function Groups() {
     console.log('Starting join process...');
 
     try {
+      console.log('Checking if membership already exists...');
+      const { data: existingMember } = await supabase
+        .from('group_members')
+        .select('id')
+        .eq('group_id', groupId)
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      if (existingMember) {
+        console.log('User is already a member, updating local state only');
+        setMyGroupIds(prev => new Set([...prev, groupId]));
+        setError('');
+        return;
+      }
+
       console.log('Inserting group member record...');
       const { error: memberError } = await supabase.from('group_members').insert({
         group_id: groupId,
@@ -84,6 +107,12 @@ export function Groups() {
       });
 
       if (memberError) {
+        if (memberError.code === '23505') {
+          console.log('Duplicate entry detected, user already joined');
+          setMyGroupIds(prev => new Set([...prev, groupId]));
+          setError('');
+          return;
+        }
         console.error('Error joining group:', memberError);
         throw memberError;
       }
@@ -147,8 +176,31 @@ export function Groups() {
         return;
       }
 
+      if (myGroupIds.has(group.id)) {
+        console.log('User is already a member of this group');
+        setError('You are already a member of this group');
+        setPrivateCode('');
+        return;
+      }
+
       if (group.current_members >= group.max_members) {
         setError('This group is full');
+        return;
+      }
+
+      console.log('Checking if membership already exists...');
+      const { data: existingMember } = await supabase
+        .from('group_members')
+        .select('id')
+        .eq('group_id', group.id)
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      if (existingMember) {
+        console.log('User is already a member, updating local state only');
+        setMyGroupIds(prev => new Set([...prev, group.id]));
+        setPrivateCode('');
+        alert('You are already a member of this group!');
         return;
       }
 
@@ -159,7 +211,16 @@ export function Groups() {
         role: 'member',
       });
 
-      if (memberError) throw memberError;
+      if (memberError) {
+        if (memberError.code === '23505') {
+          console.log('Duplicate entry detected, user already joined');
+          setMyGroupIds(prev => new Set([...prev, group.id]));
+          setPrivateCode('');
+          alert('You are already a member of this group!');
+          return;
+        }
+        throw memberError;
+      }
 
       console.log('Updating member count...');
       const { error: updateError } = await supabase
