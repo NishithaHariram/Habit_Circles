@@ -49,13 +49,14 @@ export function Groups() {
     }
 
     if (joiningGroupId) {
-      console.log('[Groups] Already joining a group');
+      console.log('[Groups] Already joining a group, preventing duplicate click');
       return;
     }
 
     if (state.myGroupIds.has(groupId)) {
-      console.log('[Groups] User is already a member');
+      console.log('[Groups] User is already a member, skipping join');
       setError('You are already a member of this group');
+      setTimeout(() => setError(''), 3000);
       return;
     }
 
@@ -67,6 +68,7 @@ export function Groups() {
 
     if (group.current_members >= group.max_members) {
       setError('This group is full');
+      setTimeout(() => setError(''), 3000);
       return;
     }
 
@@ -90,7 +92,14 @@ export function Groups() {
       console.log('[Groups] Successfully joined group');
     } catch (err: any) {
       console.error('[Groups] Error joining group:', err);
-      setError(err.message || 'Failed to join group');
+
+      if (err.message?.includes('duplicate') || err.message?.includes('unique constraint')) {
+        console.log('[Groups] Duplicate error caught - user already in group, updating UI');
+        addGroupId(groupId);
+      } else {
+        setError(err.message || 'Failed to join group');
+        setTimeout(() => setError(''), 3000);
+      }
     } finally {
       setJoiningGroupId(null);
     }
@@ -105,7 +114,7 @@ export function Groups() {
     }
 
     if (joiningGroupId) {
-      console.log('[Groups] Already joining a group');
+      console.log('[Groups] Already joining a group, preventing duplicate click');
       return;
     }
 
@@ -123,18 +132,21 @@ export function Groups() {
 
       if (!group) {
         setError('Invalid invite code');
+        setTimeout(() => setError(''), 3000);
         return;
       }
 
       if (state.myGroupIds.has(group.id)) {
-        console.log('[Groups] User is already a member');
+        console.log('[Groups] User is already a member, skipping join');
         setError('You are already a member of this group');
         setPrivateCode('');
+        setTimeout(() => setError(''), 3000);
         return;
       }
 
       if (group.current_members >= group.max_members) {
         setError('This group is full');
+        setTimeout(() => setError(''), 3000);
         return;
       }
 
@@ -150,7 +162,16 @@ export function Groups() {
       console.log('[Groups] Successfully joined private group');
     } catch (err: any) {
       console.error('[Groups] Error joining private group:', err);
-      setError(err.message || 'Failed to join group');
+
+      if (err.message?.includes('duplicate') || err.message?.includes('unique constraint')) {
+        console.log('[Groups] Duplicate error caught - user already in group, updating UI');
+        addGroupId(group.id);
+        setPrivateCode('');
+        alert('Successfully joined the group!');
+      } else {
+        setError(err.message || 'Failed to join group');
+        setTimeout(() => setError(''), 3000);
+      }
     } finally {
       setJoiningGroupId(null);
     }

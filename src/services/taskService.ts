@@ -97,11 +97,11 @@ export const taskService = {
       .maybeSingle();
 
     if (existingMember) {
-      console.log('[TaskService] User is already a member');
+      console.log('[TaskService] User is already a member, skipping insert');
       return;
     }
 
-    const { error } = await supabase
+    const { error: insertError } = await supabase
       .from('group_members')
       .insert({
         group_id: groupId,
@@ -111,22 +111,35 @@ export const taskService = {
         user_streak: 0,
       });
 
-    if (error) {
-      console.error('[TaskService] Error joining group:', error);
-      throw new Error(error.message);
+    if (insertError) {
+      if (insertError.code === '23505') {
+        console.log('[TaskService] Duplicate insert detected (race condition), user already a member');
+        return;
+      }
+      console.error('[TaskService] Error joining group:', insertError);
+      throw new Error(insertError.message);
     }
 
-    const { data: currentGroup } = await supabase
-      .from('task_groups')
-      .select('current_members')
-      .eq('id', groupId)
-      .single();
+    const { data: verifyMember } = await supabase
+      .from('group_members')
+      .select('id')
+      .eq('group_id', groupId)
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    if (currentGroup) {
-      await supabase
+    if (verifyMember) {
+      const { data: groupData } = await supabase
         .from('task_groups')
-        .update({ current_members: currentGroup.current_members + 1 })
-        .eq('id', groupId);
+        .select('current_members')
+        .eq('id', groupId)
+        .maybeSingle();
+
+      if (groupData) {
+        await supabase
+          .from('task_groups')
+          .update({ current_members: groupData.current_members + 1 })
+          .eq('id', groupId);
+      }
     }
 
     console.log('[TaskService] Successfully joined group');
