@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAppState } from '../../contexts/AppStateContext';
+import { taskService } from '../../services/taskService';
 import { supabase } from '../../lib/supabase';
 import { TaskGroup } from '../../lib/types';
 import { Plus, Lock, Globe, Users as UsersIcon, Calendar, Clock, MessageCircle } from 'lucide-react';
@@ -9,68 +11,57 @@ import { TaskRoom } from '../TaskRoom/TaskRoom';
 
 export function Groups() {
   const { profile, triggerRefresh } = useAuth();
+  const { state, updatePublicGroups, updateMyGroupIds, addGroupId, triggerRefresh: triggerAppRefresh } = useAppState();
   const [tab, setTab] = useState<'public' | 'private'>('public');
-  const [publicGroups, setPublicGroups] = useState<TaskGroup[]>([]);
   const [privateCode, setPrivateCode] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<TaskGroup | null>(null);
-  const [myGroupIds, setMyGroupIds] = useState<Set<string>>(new Set());
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [joiningGroupId, setJoiningGroupId] = useState<string | null>(null);
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    fetchPublicGroups();
-    if (profile) {
-      fetchMyGroups();
-    }
+    fetchData();
   }, [profile]);
 
-  const fetchPublicGroups = async () => {
-    const { data } = await supabase
-      .from('task_groups')
-      .select('*')
-      .eq('is_public', true)
-      .order('created_at', { ascending: false });
+  const fetchData = async () => {
+    console.log('[Groups] Fetching data');
 
-    if (data) setPublicGroups(data);
-  };
+    try {
+      const publicGroups = await taskService.fetchPublicGroups();
+      updatePublicGroups(publicGroups);
 
-  const fetchMyGroups = async () => {
-    if (!profile) return;
-
-    const { data } = await supabase
-      .from('group_members')
-      .select('group_id')
-      .eq('user_id', profile.id);
-
-    if (data) {
-      setMyGroupIds(new Set(data.map(m => m.group_id)));
+      if (profile) {
+        const myGroupIds = await taskService.fetchMyGroupIds(profile.id);
+        updateMyGroupIds(myGroupIds);
+      }
+    } catch (err) {
+      console.error('[Groups] Error fetching data:', err);
     }
   };
 
   const joinGroup = async (groupId: string) => {
-    console.log('Join Group clicked for group:', groupId);
+    console.log('[Groups] Joining group:', groupId);
 
     if (!profile) {
-      console.error('No profile found');
+      console.error('[Groups] No profile found');
       return;
     }
 
     if (joiningGroupId) {
-      console.log('Already joining a group, preventing duplicate action');
+      console.log('[Groups] Already joining a group');
       return;
     }
 
-    if (myGroupIds.has(groupId)) {
-      console.log('User is already a member of this group');
+    if (state.myGroupIds.has(groupId)) {
+      console.log('[Groups] User is already a member');
       setError('You are already a member of this group');
       return;
     }
 
-    const group = publicGroups.find(g => g.id === groupId);
+    const group = state.publicGroups.find(g => g.id === groupId);
     if (!group) {
-      console.error('Group not found:', groupId);
+      console.error('[Groups] Group not found:', groupId);
       return;
     }
 
@@ -81,89 +72,45 @@ export function Groups() {
 
     setJoiningGroupId(groupId);
     setError('');
-    console.log('Starting join process...');
 
     try {
-      console.log('Checking if membership already exists...');
-      const { data: existingMember } = await supabase
-        .from('group_members')
-        .select('id')
-        .eq('group_id', groupId)
-        .eq('user_id', profile.id)
-        .maybeSingle();
+      await taskService.joinGroup(groupId, profile.id);
 
-      if (existingMember) {
-        console.log('User is already a member, updating local state only');
-        setMyGroupIds(prev => new Set([...prev, groupId]));
-        setError('');
-        triggerRefresh();
-        return;
-      }
+      addGroupId(groupId);
 
-      console.log('Inserting group member record...');
-      const { error: memberError } = await supabase.from('group_members').insert({
-        group_id: groupId,
-        user_id: profile.id,
-        role: 'member',
-      });
-
-      if (memberError) {
-        if (memberError.code === '23505') {
-          console.log('Duplicate entry detected, user already joined');
-          setMyGroupIds(prev => new Set([...prev, groupId]));
-          setError('');
-          triggerRefresh();
-          return;
-        }
-        console.error('Error joining group:', memberError);
-        throw memberError;
-      }
-
-      console.log('Successfully added to group_members, updating member count...');
-      const { error: updateError } = await supabase
-        .from('task_groups')
-        .update({ current_members: group.current_members + 1 })
-        .eq('id', groupId);
-
-      if (updateError) {
-        console.error('Error updating member count:', updateError);
-      }
-
-      console.log('Updating local state immediately...');
-      setMyGroupIds(prev => new Set([...prev, groupId]));
-
-      setPublicGroups(prev => prev.map(g =>
-        g.id === groupId
-          ? { ...g, current_members: g.current_members + 1 }
-          : g
-      ));
+      updatePublicGroups(
+        state.publicGroups.map(g =>
+          g.id === groupId ? { ...g, current_members: g.current_members + 1 } : g
+        )
+      );
 
       triggerRefresh();
-      console.log('Join process completed successfully, dashboard refresh triggered');
+      triggerAppRefresh();
+
+      console.log('[Groups] Successfully joined group');
     } catch (err: any) {
-      console.error('Join group error:', err);
-      setError(err.message || 'Failed to join group. Please try again.');
+      console.error('[Groups] Error joining group:', err);
+      setError(err.message || 'Failed to join group');
     } finally {
       setJoiningGroupId(null);
     }
   };
 
   const joinPrivateGroup = async () => {
-    console.log('Join Private Group clicked');
+    console.log('[Groups] Joining private group with code:', privateCode);
 
     if (!profile || !privateCode) {
-      console.error('No profile or private code');
+      console.error('[Groups] No profile or private code');
       return;
     }
 
     if (joiningGroupId) {
-      console.log('Already joining a group, preventing duplicate action');
+      console.log('[Groups] Already joining a group');
       return;
     }
 
     setJoiningGroupId('private');
     setError('');
-    console.log('Searching for group with invite code:', privateCode);
 
     try {
       const { data: group, error: fetchError } = await supabase
@@ -179,8 +126,8 @@ export function Groups() {
         return;
       }
 
-      if (myGroupIds.has(group.id)) {
-        console.log('User is already a member of this group');
+      if (state.myGroupIds.has(group.id)) {
+        console.log('[Groups] User is already a member');
         setError('You are already a member of this group');
         setPrivateCode('');
         return;
@@ -191,70 +138,64 @@ export function Groups() {
         return;
       }
 
-      console.log('Checking if membership already exists...');
-      const { data: existingMember } = await supabase
-        .from('group_members')
-        .select('id')
-        .eq('group_id', group.id)
-        .eq('user_id', profile.id)
-        .maybeSingle();
+      await taskService.joinGroup(group.id, profile.id);
 
-      if (existingMember) {
-        console.log('User is already a member, updating local state only');
-        setMyGroupIds(prev => new Set([...prev, group.id]));
-        setPrivateCode('');
-        triggerRefresh();
-        alert('You are already a member of this group!');
-        return;
-      }
-
-      console.log('Inserting group member record...');
-      const { error: memberError } = await supabase.from('group_members').insert({
-        group_id: group.id,
-        user_id: profile.id,
-        role: 'member',
-      });
-
-      if (memberError) {
-        if (memberError.code === '23505') {
-          console.log('Duplicate entry detected, user already joined');
-          setMyGroupIds(prev => new Set([...prev, group.id]));
-          setPrivateCode('');
-          triggerRefresh();
-          alert('You are already a member of this group!');
-          return;
-        }
-        throw memberError;
-      }
-
-      console.log('Updating member count...');
-      const { error: updateError } = await supabase
-        .from('task_groups')
-        .update({ current_members: group.current_members + 1 })
-        .eq('id', group.id);
-
-      if (updateError) {
-        console.error('Error updating member count:', updateError);
-      }
-
-      console.log('Updating local state...');
-      setMyGroupIds(prev => new Set([...prev, group.id]));
+      addGroupId(group.id);
       setPrivateCode('');
       setError('');
       triggerRefresh();
+      triggerAppRefresh();
+
       alert('Successfully joined the group!');
-      console.log('Private group join completed successfully, dashboard refresh triggered');
+      console.log('[Groups] Successfully joined private group');
     } catch (err: any) {
-      console.error('Join private group error:', err);
-      setError(err.message || 'Failed to join group. Please try again.');
+      console.error('[Groups] Error joining private group:', err);
+      setError(err.message || 'Failed to join group');
     } finally {
       setJoiningGroupId(null);
     }
   };
 
-  const getDayName = (index: number) => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return days[index];
+  const handleCreateGroup = async (
+    taskName: string,
+    description: string,
+    durationMinutes: number,
+    isPublic: boolean,
+    maxMembers: number,
+    repeatDays: boolean[]
+  ) => {
+    console.log('[Groups] Creating group:', { taskName, isPublic, maxMembers });
+
+    if (!profile) {
+      console.error('[Groups] No profile found');
+      return;
+    }
+
+    try {
+      const newGroup = await taskService.createGroup(
+        profile.id,
+        taskName,
+        description,
+        durationMinutes,
+        isPublic,
+        maxMembers,
+        repeatDays
+      );
+
+      addGroupId(newGroup.id);
+
+      if (isPublic) {
+        updatePublicGroups([newGroup, ...state.publicGroups]);
+      }
+
+      triggerRefresh();
+      triggerAppRefresh();
+
+      console.log('[Groups] Successfully created group');
+    } catch (err) {
+      console.error('[Groups] Error creating group:', err);
+      throw err;
+    }
   };
 
   if (activeRoomId) {
@@ -262,167 +203,159 @@ export function Groups() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
+    <div className="max-w-6xl mx-auto">
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-red-600 dark:text-red-400">{error}</p>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Task Groups</h1>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg flex items-center space-x-2 transition-colors font-medium"
+          className="flex items-center space-x-2 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors"
         >
           <Plus className="w-5 h-5" />
           <span>Create Group</span>
         </button>
       </div>
 
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg mb-6">
-          {error}
-        </div>
-      )}
+      <div className="flex space-x-4 mb-6">
+        <button
+          onClick={() => setTab('public')}
+          className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-colors ${
+            tab === 'public'
+              ? 'bg-blue-500 text-white'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+          }`}
+        >
+          <Globe className="w-5 h-5" />
+          <span>Public Groups</span>
+        </button>
+        <button
+          onClick={() => setTab('private')}
+          className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-colors ${
+            tab === 'private'
+              ? 'bg-blue-500 text-white'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+          }`}
+        >
+          <Lock className="w-5 h-5" />
+          <span>Private Groups</span>
+        </button>
+      </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden">
-        <div className="flex border-b border-gray-200 dark:border-gray-700">
-          <button
-            onClick={() => setTab('public')}
-            className={`flex-1 px-6 py-4 font-medium transition-colors ${
-              tab === 'public'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
-            <div className="flex items-center justify-center space-x-2">
-              <Globe className="w-5 h-5" />
-              <span>Public Platform</span>
-            </div>
-          </button>
-          <button
-            onClick={() => setTab('private')}
-            className={`flex-1 px-6 py-4 font-medium transition-colors ${
-              tab === 'private'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
-            <div className="flex items-center justify-center space-x-2">
-              <Lock className="w-5 h-5" />
-              <span>Private Platform</span>
-            </div>
-          </button>
-        </div>
+      {tab === 'public' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {state.publicGroups.map((group) => {
+            const isMember = state.myGroupIds.has(group.id);
+            const isJoining = joiningGroupId === group.id;
+            const isFull = group.current_members >= group.max_members;
 
-        <div className="p-6">
-          {tab === 'public' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {publicGroups.map((group) => {
-                const isMember = myGroupIds.has(group.id);
-                return (
-                  <div
-                    key={group.id}
-                    className="border border-gray-200 dark:border-gray-700 rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer"
-                    onClick={() => setSelectedGroup(group)}
-                  >
-                    <h3 className="font-bold text-xl text-gray-900 dark:text-white mb-2">{group.task_name}</h3>
+            return (
+              <div
+                key={group.id}
+                className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                      {group.task_name}
+                    </h3>
                     {group.description && (
-                      <p className="text-gray-600 dark:text-gray-400 text-sm mb-4 line-clamp-2">{group.description}</p>
-                    )}
-
-                    <div className="space-y-2 mb-4">
-                      <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
-                        <Clock className="w-4 h-4" />
-                        <span>{group.duration_minutes} min/day</span>
-                      </div>
-                      <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
-                        <UsersIcon className="w-4 h-4" />
-                        <span>{group.current_members}/{group.max_members} members</span>
-                      </div>
-                      <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
-                        <Calendar className="w-4 h-4" />
-                        <span>Streak: {group.group_streak} days</span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1 mb-4">
-                      {group.repeat_days.map((active, index) => (
-                        <span
-                          key={index}
-                          className={`px-2 py-1 rounded text-xs ${
-                            active
-                              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                              : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
-                          }`}
-                        >
-                          {getDayName(index)}
-                        </span>
-                      ))}
-                    </div>
-
-                    {!isMember && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          joinGroup(group.id);
-                        }}
-                        disabled={joiningGroupId === group.id}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {joiningGroupId === group.id ? 'Joining...' : 'Join Group'}
-                      </button>
-                    )}
-                    {isMember && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveRoomId(group.id);
-                        }}
-                        className="w-full bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white py-2 rounded-lg transition-all font-medium flex items-center justify-center space-x-2"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        <span>Open Room</span>
-                      </button>
+                      <p className="text-gray-600 dark:text-gray-400 text-sm mb-3">
+                        {group.description}
+                      </p>
                     )}
                   </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="max-w-md mx-auto">
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-8 text-center">
-                <Lock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Join Private Group</h3>
-                <p className="text-gray-600 dark:text-gray-400 mb-6">Enter a 6-digit invite code to join a private group</p>
+                </div>
+
+                <div className="space-y-2 mb-4">
+                  <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
+                    <Clock className="w-4 h-4" />
+                    <span>{group.duration_minutes} minutes</span>
+                  </div>
+                  <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
+                    <UsersIcon className="w-4 h-4" />
+                    <span>
+                      {group.current_members} / {group.max_members} members
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
+                    <Calendar className="w-4 h-4" />
+                    <span>Streak: {group.group_streak} days</span>
+                  </div>
+                </div>
 
                 <div className="flex space-x-2">
-                  <input
-                    type="text"
-                    value={privateCode}
-                    onChange={(e) => setPrivateCode(e.target.value.toUpperCase())}
-                    placeholder="ABC123"
-                    maxLength={6}
-                    disabled={joiningGroupId === 'private'}
-                    className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-800 dark:text-white text-center text-lg font-mono disabled:opacity-50"
-                  />
-                  <button
-                    onClick={joinPrivateGroup}
-                    disabled={joiningGroupId === 'private' || !privateCode}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {joiningGroupId === 'private' ? 'Joining...' : 'Join'}
-                  </button>
+                  {isMember ? (
+                    <>
+                      <button
+                        onClick={() => setSelectedGroup(group)}
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors"
+                      >
+                        View Details
+                      </button>
+                      <button
+                        onClick={() => setActiveRoomId(group.id)}
+                        className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors"
+                        title="Task Room"
+                      >
+                        <MessageCircle className="w-5 h-5" />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => joinGroup(group.id)}
+                      disabled={isFull || isJoining}
+                      className={`flex-1 px-4 py-2 rounded-lg transition-colors ${
+                        isFull
+                          ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                          : isJoining
+                          ? 'bg-blue-400 text-white cursor-wait'
+                          : 'bg-blue-500 hover:bg-blue-600 text-white'
+                      }`}
+                    >
+                      {isFull ? 'Full' : isJoining ? 'Joining...' : 'Join Group'}
+                    </button>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })}
         </div>
-      </div>
+      ) : (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+            Join Private Group
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            Enter the invite code to join a private group
+          </p>
+          <div className="flex space-x-4">
+            <input
+              type="text"
+              value={privateCode}
+              onChange={(e) => setPrivateCode(e.target.value.toUpperCase())}
+              placeholder="INVITE CODE"
+              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+            />
+            <button
+              onClick={joinPrivateGroup}
+              disabled={!privateCode || joiningGroupId === 'private'}
+              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition-colors disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed"
+            >
+              {joiningGroupId === 'private' ? 'Joining...' : 'Join'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showCreateModal && (
         <CreateGroupModal
           onClose={() => setShowCreateModal(false)}
-          onCreated={() => {
-            setShowCreateModal(false);
-            fetchPublicGroups();
-            fetchMyGroups();
-          }}
+          onCreate={handleCreateGroup}
         />
       )}
 
@@ -430,11 +363,6 @@ export function Groups() {
         <GroupDetailModal
           group={selectedGroup}
           onClose={() => setSelectedGroup(null)}
-          isMember={myGroupIds.has(selectedGroup.id)}
-          onJoin={async () => {
-            await joinGroup(selectedGroup.id);
-            setSelectedGroup(null);
-          }}
         />
       )}
     </div>

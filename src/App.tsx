@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { AppStateProvider } from './contexts/AppStateContext';
 import { Login } from './components/Auth/Login';
 import { SignUp } from './components/Auth/SignUp';
 import { Navbar } from './components/Layout/Navbar';
@@ -54,7 +55,9 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <MainApp />
+        <AppStateProvider>
+          <MainApp />
+        </AppStateProvider>
       </AuthProvider>
     </ThemeProvider>
   );
