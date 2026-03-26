@@ -73,17 +73,17 @@ export function TaskCard({
             }
           }}
           disabled={isCompleted || isCompleting}
-          className={`absolute top-3 left-3 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-300 ${
+          className={`absolute top-3 left-3 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-300 transform ${
             isCompleted
-              ? 'bg-green-500 border-green-500 cursor-not-allowed'
-              : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 cursor-pointer'
-          } ${isCompleting ? 'opacity-50 cursor-wait' : ''}`}
+              ? 'bg-green-500 border-green-500 cursor-not-allowed scale-100'
+              : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 hover:scale-110 active:scale-95 cursor-pointer'
+          } ${isCompleting ? 'opacity-50 cursor-wait animate-pulse' : ''}`}
           title={isCompleted ? 'Completed today' : 'Mark as complete'}
         >
           {isCompleted ? (
-            <CheckCircle2 className="w-5 h-5 text-white" />
+            <CheckCircle2 className="w-5 h-5 text-white animate-in zoom-in duration-300" />
           ) : (
-            <Circle className="w-5 h-5 text-gray-400" />
+            <Circle className="w-5 h-5 text-gray-400 hover:text-green-500 transition-colors" />
           )}
         </button>
 
